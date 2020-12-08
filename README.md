@@ -15,8 +15,8 @@ pip install python-dotenv pymongo
 
 ```
 # API key to access the storage.
-DC_CONTROLLER_SECRET = stuff_here
-DB_PASSWORD = name_here
+DC_CONTROLLER_SECRET = secret-here   # Create a new API secret in the Data Culpa Validator UI
+DB_PASSWORD = secret-here
 ```
 
 5. Run ```mongodatalake.py --init your.yaml``` to generate a template yaml to fill in connection coordinates. Note that we always keep secrets in the .env and not the yaml, so that the yaml file will be safe to check into source control or otherwise distribute in your organization, etc.
@@ -26,10 +26,10 @@ DB_PASSWORD = name_here
 7. Run ```mongodatalake.py --sync-config your.yaml``` to add metadata to your yaml file for each collection found in your MongoDB and example parameters of how to treat each collection and new collections:
 
 ```
-example yaml
+FIXME: add example yaml
 ```
 
-## Invokation
+## Invocation
 
 The ```mongodatalake.py``` script is intended to be invoked from cron or other orchestration systems. You can run it as frequently as you wish; you can spread out instances to isolate collections or different databases with different yaml configuration files. We recommend pointing the script at a replica of your database to reduce impact on the life system.
 
