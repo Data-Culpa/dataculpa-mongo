@@ -83,14 +83,14 @@ class DbConfig:
                         'user': 'dataculpa',
                         'password': 'move to environment variable injection',
                         # databases, collections, etc...
-                        #'table_config':
+                        #'collection_config':
                         #    [
                         #        { 'example_name': { 'enabled': False, 'id_field': '(infer)' }}
                         #    ]
                     },
                     'behavior':
                         {
-                            'new_tables': 'traverse', # or ignore
+                            'new_collections': 'traverse', # or ignore
                         },
                   }
 
@@ -155,7 +155,7 @@ class DbConfig:
 
     def get_traverse_new_tables(self):
         b = self.get_behavior()
-        if b.get('new_tables', 'traverse') == 'traverse':
+        if b.get('new_collections', 'traverse') == 'traverse':
             return True
         return False
 
@@ -180,7 +180,6 @@ class DbConfig:
         return pr
 
     def get_mongo_connection(self):
-        assert self._get_db_type() == "mongodb"
         # mongodb
         # https://api.mongodb.com/python/current/examples/authentication.html
         # Some unsupported-by-us mechanisms documented at the above url.
@@ -228,8 +227,6 @@ def do_test_config(fname):
         os._exit(1)
         return
 
-    print("do_test_config")
-
     # load the config
     config = DbConfig()
     d = config.load(fname)
@@ -237,9 +234,20 @@ def do_test_config(fname):
     # can we connect to the db?
     config.test_connect_db()
 
-    # can we ping the controller?
+    # FIXME: can we ping the controller?
+    return config
 
-    #
+def do_sync_config(fname):
+    print("Not yet implemented.")
+
+    # so we run the test config
+    config = do_test_config(fname)
+
+    # ok, connect to the db again and load up all the table info.
+    # for any table not found in the config, make a new entry showing that it is disabled.
+    # for any table in the config but missing from the db, make a note.
+    # pyyaml doesn't let us inject comments -- I noticed some other yaml packages for python do, but hesisate a bit to bring in a bunch of random things.
+
 
     return
 
@@ -257,7 +265,7 @@ def do_run(fname):
     # if we can't connect, log an erto the cache.
     config.do_connect() # FIXME: handle errors.
 
-    traverse_new_tables = config.get_traverse_new_tables()
+    #traverse_new_tables = config.get_traverse_new_tables()
 
     # we need to keep some metadata of where we were at -- some state.
     #
@@ -333,6 +341,8 @@ def main():
                     action='store_true')
     ap.add_argument("--test-config",
                     help="takes a yaml config file and will run through the connections and verify things work")
+    ap.add_argument("--sync-config",
+                    help="Given a config file with working database creds, will update the config file to include an entry for all the collections found (with any new ones disabled). Run this to look for errors in the collection configuration, new collections that are unconfigured, etc. Returns 0 if everything lines up.")
     ap.add_argument("--run",
                     help="Run the db scan described in the specified yaml file")
 
@@ -350,6 +360,8 @@ def main():
        do_initdb()
     elif args.test_config:
         do_test_config(args.test_config)
+    elif args.sync_config:
+        do_sync_config(args.sync_config)
     elif args.run:
         do_run(args.run)
     else:
