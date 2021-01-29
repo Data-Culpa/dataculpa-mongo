@@ -73,15 +73,14 @@ class DbConfig:
                             'host': 'dataculpa-api',
                             'port': 7777,
                             #'url': 'http://192.168.1.13:7777',
-                            'api_access_id': 'fill-me-in', # not used at the moment.
-
+                            'api-secret': 'set in .env file $DC_CONTROLLER_SECRET; not here',
                         },
                     'db_server': {
                         'host': 'localhost',
                         'dbname': 'dataculpa',
                         #'port': '27017',
                         'user': 'dataculpa',
-                        'password': 'move to environment variable injection',
+                        'password': 'set in .env file $DB_PASSWORD; not here',
                         # databases, collections, etc...
                         #'collection_config':
                         #    [
@@ -101,7 +100,7 @@ class DbConfig:
             return
 
         f = open(fname, 'w')
-        yaml.safe_dump(self._d, f)
+        yaml.safe_dump(self._d, f, default_flow_style=False)
         f.close()
         return
 
@@ -357,16 +356,20 @@ def main():
         DEBUG = True
 
     if args.initdb:
-       do_initdb()
+        do_initdb()
+        return
     elif args.test_config:
         do_test_config(args.test_config)
+        return
     elif args.sync_config:
         do_sync_config(args.sync_config)
+        return
     elif args.run:
         do_run(args.run)
-    else:
-        print("Try --help")
+        return
 
+    print("Try --help")
+    os._exit(2)
     return
 
 

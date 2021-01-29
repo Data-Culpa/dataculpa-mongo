@@ -36,3 +36,7 @@ The ```mongodatalake.py``` script is intended to be invoked from cron or other o
 ## Future Improvements
 
 There are many improvements we are considering for this module. You can get in touch by writing to hello@dataculpa.com or opening issues in this repository.
+
+## SaaS deployment
+
+Our hosted SaaS includes Mongo and other connectors and a GUI for configuration. If you'd like to try it out before general availability, drop a line to hello@dataculpa.com.
