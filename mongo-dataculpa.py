@@ -53,6 +53,9 @@ from pymongo import MongoClient, DESCENDING
 DEBUG = False
 
 
+if sys.version_info[0] < 3:
+    raise Exception("This code requires python 3")
+
 class MongoJSONEncoder(json.JSONEncoder):
     def default(self, o):  # pylint: disable=E0202
         if isinstance(o, bson.ObjectId):
@@ -65,33 +68,27 @@ class MongoJSONEncoder(json.JSONEncoder):
 
         return json.JSONEncoder.default(self, o)
 
-class DbConfig:
+class Config:
     def __init__(self): #, db, host, port, user, password):
-        self._d = { 'mode': 'database',
-                    'dataculpa_controller':
-                        {
-                            'host': 'dataculpa-api',
+        self._d = { 
+                    'dataculpa_controller': {
+                            'host': 'localhost',
                             'port': 7777,
-                            #'url': 'http://192.168.1.13:7777',
-                            'api-secret': 'set in .env file $DC_CONTROLLER_SECRET; not here',
-                        },
-                    'db_server': {
-                        'host': 'localhost',
-                        'dbname': 'dataculpa',
-                        #'port': '27017',
-                        'user': 'dataculpa',
-                        'password': 'set in .env file $DB_PASSWORD; not here',
-                        # databases, collections, etc...
-                        #'collection_config':
-                        #    [
-                        #        { 'example_name': { 'enabled': False, 'id_field': '(infer)' }}
-                        #    ]
                     },
-                    'behavior':
-                        {
-                            'new_collections': 'traverse', # or ignore
-                        },
-                  }
+                    'configuration': {
+                        'host': '[required] localhost',
+                        'dbname': '[required] name',
+                        'user': '[optional] dataculpa',
+                        'port': '[optional] 27017',
+                        'collection_list': []
+                    },
+                    'dataculpa_pipeline': {
+                        'name': '[required] pipeline_name',
+                        'environment': '[optional] environment, e.g., test or production',
+                        'stage': '[optional] a string representing the stage of this part of the pipeline',
+                        'version': '[optional] a string representing the version of implementation'
+                    }
+                }
 
     def save(self, fname):
         if os.path.exists(fname):
@@ -115,15 +112,12 @@ class DbConfig:
         d = self._d.get('db_server')
         return d.get(field, default_value)
 
-    def generate_db_id_str(self):
-        return "db_type:%s,host:%s:%s,name:%s" % ("mongo", self._get_db('host'), self._get_db('port'), self._get_db('dbname'))
-
     def get_db_mongo(self):
         return (self._get_db('host'),
                 self._get_db('port', 27017),
                 self._get_db('dbname'),
                 self._get_db('user'),
-                self._get_db('password'))
+                os.environ.get('MONGO_PASSWORD', ''))
 
     def get_controller_config(self):
         return self._d.get('dataculpa_controller')
@@ -215,9 +209,16 @@ class DbConfig:
         return
 
 
-def do_initdb():
-    config = DbConfig()
-    config.save("example.yaml")
+def do_initdb(filename):
+    print("Initialize new file")
+    config = Config()
+    config.save(filename)
+    # Put out an .env template too.
+    with open(filename + ".env", "w") as f:
+        #f.write("DC_CONTROLLER_SECRET=empty\n")
+        f.write("MONGO_PASSWORD=[optional]\n")
+        f.close()
+
     return
 
 def do_test_config(fname):
@@ -227,7 +228,7 @@ def do_test_config(fname):
         return
 
     # load the config
-    config = DbConfig()
+    config = Config()
     d = config.load(fname)
 
     # can we connect to the db?
@@ -236,17 +237,10 @@ def do_test_config(fname):
     # FIXME: can we ping the controller?
     return config
 
-def do_sync_config(fname):
+def do_discover(fname):
     print("Not yet implemented.")
 
-    # so we run the test config
-    config = do_test_config(fname)
-
-    # ok, connect to the db again and load up all the table info.
-    # for any table not found in the config, make a new entry showing that it is disabled.
-    # for any table in the config but missing from the db, make a note.
-    # pyyaml doesn't let us inject comments -- I noticed some other yaml packages for python do, but hesisate a bit to bring in a bunch of random things.
-
+    # We want to discover the collections in the given database.
 
     return
 
@@ -255,7 +249,7 @@ def do_run(fname):
     print("do_run")
 
     # load the config
-    config = DbConfig()
+    config = Config()
     d = config.load(fname)
 
     db_id_str = config.generate_db_id_str()
@@ -335,41 +329,45 @@ def do_run(fname):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--initdb",
-                    help="one time use to generate a new db yaml file (prompts for inputs)",
-                    action='store_true')
-    ap.add_argument("--test-config",
-                    help="takes a yaml config file and will run through the connections and verify things work")
-    ap.add_argument("--sync-config",
-                    help="Given a config file with working database creds, will update the config file to include an entry for all the collections found (with any new ones disabled). Run this to look for errors in the collection configuration, new collections that are unconfigured, etc. Returns 0 if everything lines up.")
-    ap.add_argument("--run",
-                    help="Run the db scan described in the specified yaml file")
+    ap.add_argument("-e", "--env",
+                    help="Use provided env file instead of default .env")
 
-    ap.add_argument("--debug",
-                    help="print logs to the console",
-                    action='store_true')
+    ap.add_argument("--init",     help="Init a yaml config file to fill in.")
+    ap.add_argument("--discover", help="Run the specified configuration to discover available databases/tables in Snowflake")
+    ap.add_argument("--test",     help="Test the configuration specified.")
+    ap.add_argument("--run",      help="Normal operation: run the pipeline")
 
     args = ap.parse_args()
 
-    global DEBUG
-    if args.debug:
-        DEBUG = True
+    if args.init:
+        do_initdb(args.init)
+        return
+    else:
+        env_path = ".env"
+        if args.env:
+            env_path = args.env
+        if not os.path.exists(env_path):
+            sys.stderr.write("Error: missing env file at %s\n" % os.path.realpath(env_path))
+            os._exit(1)
+            return
+        # endif
 
-    if args.initdb:
-        do_initdb()
-        return
-    elif args.test_config:
-        do_test_config(args.test_config)
-        return
-    elif args.sync_config:
-        do_sync_config(args.sync_config)
-        return
-    elif args.run:
-        do_run(args.run)
-        return
+        if args.discover:
+            dotenv.load_dotenv(env_path)
+            do_discover(args.discover)
+            return
+        elif args.test:
+            dotenv.load_dotenv(env_path)
+            do_test_config(args.test)
+            return
+        elif args.run:
+            dotenv.load_dotenv(env_path)
+            do_run(args.run)
+            return
+        # endif
+    # endif
 
-    print("Try --help")
-    os._exit(2)
+    ap.print_help()
     return
 
 
