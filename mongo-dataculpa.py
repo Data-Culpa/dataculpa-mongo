@@ -356,7 +356,7 @@ def main():
                     help="Use provided env file instead of default .env")
 
     ap.add_argument("--init",     help="Init a yaml config file to fill in.")
-    ap.add_argument("--discover", help="Run the specified configuration to discover available databases/tables in Snowflake")
+    ap.add_argument("--discover", help="Run the specified configuration to discover available databases/collections. The yaml must have the host and port (if not running on the default port) specified.")
     ap.add_argument("--test",     help="Test the configuration specified.")
     ap.add_argument("--run",      help="Normal operation: run the pipeline")
 

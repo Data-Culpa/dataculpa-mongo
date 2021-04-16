@@ -1,6 +1,8 @@
 # dataculpa-mongo
 MongoDB connector for Data Culpa for monitoring ongoing quality metrics in Mongo databases.
 
+This connector conforms to the [Data Culpa connector template](https://github.com/Data-Culpa/connector-template).
+
 
 ## Getting Started
 
@@ -8,22 +10,21 @@ MongoDB connector for Data Culpa for monitoring ongoing quality metrics in Mongo
 1. Clone the repo (or just mongodatalake.py)
 2. Install python dependencies (python3):
 ```
-pip install python-dotenv pymongo
+pip install python-dotenv pymongo dataculpa-client
 ```
-3. Install the [Data Culpa python client](https://github.com/Data-Culpa/openclients) and configure your ```PYTHONPATH``` to include the ```dataculpa/``` directory.  (Coming soon: pip package.)
-4. Create a .env file with the following keys:
+3. Create a .env file with the following keys (if you're running Mongo without a password, no need to specify the DB_PASSWORD key):
 
 ```
 # API key to access the storage.
 DC_CONTROLLER_SECRET = secret-here   # Create a new API secret in the Data Culpa Validator UI
-DB_PASSWORD = secret-here
+DB_PASSWORD = secret-here 
 ```
 
-5. Run ```mongodatalake.py --init your.yaml``` to generate a template yaml to fill in connection coordinates. Note that we always keep secrets in the .env and not the yaml, so that the yaml file will be safe to check into source control or otherwise distribute in your organization, etc.
+4. Run ```mongo-dataculpa.py --init your.yaml``` to generate a template yaml to fill in connection coordinates. Note that we always keep secrets in the .env and not the yaml, so that the yaml file will be safe to check into source control or otherwise distribute in your organization, etc.
 
-6. Once you have your yaml file edited, run ```mongodatalake.py --test your.yaml``` to test the connections to the database and the Data Culpa Validator controller.
+5. Once you have your yaml file edited, run ```mongo-dataculpa.py --test your.yaml``` to test the connections to the database and the Data Culpa Validator controller.
 
-7. Run ```mongodatalake.py --sync-config your.yaml``` to add metadata to your yaml file for each collection found in your MongoDB and example parameters of how to treat each collection and new collections:
+6. Run ```mongo-dataculpa.py --sync-config your.yaml``` to add metadata to your yaml file for each collection found in your MongoDB and example parameters of how to treat each collection and new collections:
 
 ```
 FIXME: add example yaml
