@@ -24,15 +24,15 @@ DB_PASSWORD = secret-here
 
 5. Once you have your yaml file edited, run ```mongo-dataculpa.py --test your.yaml``` to test the connections to the database and the Data Culpa Validator controller.
 
-6. Run ```mongo-dataculpa.py --sync-config your.yaml``` to add metadata to your yaml file for each collection found in your MongoDB and example parameters of how to treat each collection and new collections:
+6. Run ```mongo-dataculpa.py --addnew your.yaml``` to add metadata to your yaml file for each collection found in your MongoDB and example parameters of how to treat each collection and new collections:
 
 ```
-FIXME: add example yaml
+
 ```
 
 ## Invocation
 
-The ```mongodatalake.py``` script is intended to be invoked from cron or other orchestration systems. You can run it as frequently as you wish; you can spread out instances to isolate collections or different databases with different yaml configuration files. We recommend pointing the script at a replica of your database to reduce impact on the life system.
+The ```mongo-datalake.py``` script is intended to be invoked from cron or other orchestration systems. You can run it as frequently as you wish; you can spread out instances to isolate collections or different databases with different yaml configuration files. We recommend pointing the script at a replica of your database to reduce impact on the life system.
 
 ## Future Improvements
 

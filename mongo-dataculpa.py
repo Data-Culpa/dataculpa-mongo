@@ -238,6 +238,24 @@ def do_test_config(fname):
     # FIXME: can we ping the controller?
     return config
 
+
+def DiscoverDatabasesAndCollections(client):
+    d = {}
+
+    for db in client.list_databases():
+        # find collections in the database
+        db_name = db.get('name', None)
+        if db_name is None:
+            continue
+            continue
+
+        the_db = client[db_name]
+        for coll in the_db.list_collection_names():
+            existing = d.get(db_name, [])
+            existing.append(coll)
+            d[db_name] = existing
+    return d
+
 def do_discover(fname):
     # We also want to discover the databases for the given server, especially if none is specified.
 
@@ -250,20 +268,78 @@ def do_discover(fname):
 
     client = MongoClient(host, port)
 
-    print("Databases:")
-    for db in client.list_databases():
+    d = DiscoverDatabasesAndCollections(client)
+    
+    db_names = list(d.keys())
+    db_names.sort()
 
-        # find collections in the database
-        db_name = db.get('name', None)
-        if db_name is None:
-            sys.stderr.write("missing name attr on db record?!");
+    for db in db_names:
+        print("%s:" % db)
+        cList = d.get(db, [])
+        cList.sort()
+        for cl in cList:
+            print("   %s" % cl)
+        print("")
+    # endfor
+
+    return
+
+
+def do_add(fname, in_db_name):
+    #print("do_add")
+
+
+    # load the config
+    # generate a dict object.
+    config = Config()
+    config.load(fname)
+
+    (host, port, dbname, user, password) = config.get_db_mongo()
+
+    if in_db_name is None:
+        if dbname is None:
+            sys.stderr.write("No dbname specified in .yaml config and no --database passed.\n")
+            os._exit(2)
+        else:
+            in_db_name = dbname
+
+    client = MongoClient(host, port)
+    d = DiscoverDatabasesAndCollections(client)
+
+    cc_list = []
+
+    #print("running on %s" % in_db_name)
+
+    for db in list(d.keys()):
+        if db != in_db_name:
             continue
 
-        the_db = client[db_name]
-        for coll in the_db.list_collection_names():
-            print("db = %s, collection = %s" % (db_name, coll))
-        print("")
+        cList = d.get(db, [])
+        cList.sort()
+        for cl in cList:
+            cc = { 'collection': cl,
+                   'dataculpa_watchpoint': 'auto-' + db + "-" + cl,
+                   'enabled': True,
+                   'desc_order_by': '_id', 
+                   'initial_limit': 30, 
+                   'initial_limit_unit': 'days' }
+            cc_list.append(cc)
+        # endfor
+    # endfor
 
+    if len(cc_list) == 0:
+        sys.stderr.write("Either no database named %s or it is empty." % in_db_name)
+        os._exit(3)
+    # endif
+
+    db_config = { 'dbname': in_db_name,
+                  'collections': cc_list
+                }
+
+    print("Example yaml to work with:")
+    print("--------------------------")
+
+    yaml.safe_dump(db_config, sys.stdout, default_flow_style=False)
 
     return
 
@@ -357,8 +433,13 @@ def main():
 
     ap.add_argument("--init",     help="Init a yaml config file to fill in.")
     ap.add_argument("--discover", help="Run the specified configuration to discover available databases/collections. The yaml must have the host and port (if not running on the default port) specified.")
+    ap.add_argument("--add",      help="Requires --database flag if database is not populated in the passed YAML file. Generate YAML config (to stdout) for un-configured databases and collections that can be inserted into the YAML for the specified configuration.")
     ap.add_argument("--test",     help="Test the configuration specified.")
     ap.add_argument("--run",      help="Normal operation: run the pipeline")
+
+    # FIXME: implement add subcommand.
+#    ap_add = subparsers.add_parser("--add")
+    ap.add_argument("--database", help="Operate on the specified database name")
 
     args = ap.parse_args()
 
@@ -382,6 +463,10 @@ def main():
         elif args.test:
             dotenv.load_dotenv(env_path)
             do_test_config(args.test)
+            return
+        elif args.add:
+            dotenv.load_dotenv(env_path)
+            do_add(args.add, args.database)
             return
         elif args.run:
             dotenv.load_dotenv(env_path)
