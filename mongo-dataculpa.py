@@ -4,7 +4,7 @@
 # mongo-dataculpa.py
 # MongoDB Data Culpa Connector
 #
-# Copyright © 2019-2020 Data Culpa, Inc. All rights reserved.
+# Copyright © 2019-2021 Data Culpa, Inc. All rights reserved.
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to 
@@ -35,6 +35,7 @@
 # 
 
 import argparse
+import dotenv
 import json
 import os
 import sys
@@ -109,7 +110,7 @@ class Config:
         return
 
     def _get_db(self, field, default_value=None):
-        d = self._d.get('db_server')
+        d = self._d.get('configuration')
         return d.get(field, default_value)
 
     def get_db_mongo(self):
@@ -229,7 +230,7 @@ def do_test_config(fname):
 
     # load the config
     config = Config()
-    d = config.load(fname)
+    config.load(fname)
 
     # can we connect to the db?
     config.test_connect_db()
@@ -238,9 +239,31 @@ def do_test_config(fname):
     return config
 
 def do_discover(fname):
-    print("Not yet implemented.")
+    # We also want to discover the databases for the given server, especially if none is specified.
 
     # We want to discover the collections in the given database.
+
+    config = Config()
+    config.load(fname)
+
+    (host, port, dbname, user, password) = config.get_db_mongo()
+
+    client = MongoClient(host, port)
+
+    print("Databases:")
+    for db in client.list_databases():
+
+        # find collections in the database
+        db_name = db.get('name', None)
+        if db_name is None:
+            sys.stderr.write("missing name attr on db record?!");
+            continue
+
+        the_db = client[db_name]
+        for coll in the_db.list_collection_names():
+            print("db = %s, collection = %s" % (db_name, coll))
+        print("")
+
 
     return
 
@@ -250,7 +273,7 @@ def do_run(fname):
 
     # load the config
     config = Config()
-    d = config.load(fname)
+    config.load(fname)
 
     db_id_str = config.generate_db_id_str()
 
