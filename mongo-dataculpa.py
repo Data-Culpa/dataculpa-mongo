@@ -37,8 +37,12 @@
 import argparse
 import dotenv
 import json
+import logging
 import os
+import pickle
 import sys
+import sqlite3
+import time
 import yaml
 
 import decimal
@@ -52,6 +56,14 @@ from dataculpa import DataCulpaValidator
 from pymongo import MongoClient, DESCENDING
 
 DEBUG = False
+
+def FatalError(rc, message):
+    sys.stderr.write(message)
+    sys.stderr.write("\n")
+    sys.stderr.flush()
+    os._exit(rc)
+    return
+
 
 
 if sys.version_info[0] < 3:
@@ -78,10 +90,11 @@ class Config:
                     },
                     'configuration': {
                         'host': '[required] localhost',
-                        'dbname': '[required] name',
                         'user': '[optional] dataculpa',
                         'port': '[optional] 27017',
-                        'collection_list': []
+                        'dbname': '[required] name',
+                        'collections': []
+
                     },
                     'dataculpa_pipeline': {
                         'name': '[required] pipeline_name',
@@ -113,6 +126,13 @@ class Config:
         d = self._d.get('configuration')
         return d.get(field, default_value)
 
+    def get_configuration(self):
+        return self._d.get('configuration')
+    
+    def get_local_cache_file(self):
+        return self.get_configuration().get('session_history_cache', 'session_history_cache.db')
+
+
     def get_db_mongo(self):
         return (self._get_db('host'),
                 self._get_db('port', 27017),
@@ -124,20 +144,24 @@ class Config:
         return self._d.get('dataculpa_controller')
 
     def connect_controller(self, pipeline_name):
+        # FIXME: maybe handle $<var> substitution, like we do in the 
+        # FIXME: Snowflake connector
+ 
         cc = self.get_controller_config()
         host = cc.get('host')
         port = cc.get('port')
         v = DataCulpaValidator(pipeline_name,
                                protocol=DataCulpaValidator.HTTP,
                                dc_host=host,
-                               dc_port=port)
+                               dc_port=port,
+                               queue_window=1000)
         return v
 
-    def get_db_table_config(self):
-        return self._get_db('table_config')
+    def get_db_collection_config(self):
+        return self._get_db('collections')
 
     def get_table_config_for_table_name(self, name):
-        for entry in self.get_db_table_config():
+        for entry in self.get_db_collection_config():
             if entry.get('name', '') == name:
                 #return entry.get('enabled')
                 return entry
@@ -154,7 +178,7 @@ class Config:
         return False
 
     def do_connect(self):
-        (self._mongo_client, self._mongo_db) = self.get_mongo_connection()
+        (self._mongo_client, self._mongo_db) = self._get_mongo_connection()
         return
 
     def do_fetch_live_table_list(self):
@@ -173,7 +197,7 @@ class Config:
             #print(r)
         return pr
 
-    def get_mongo_connection(self):
+    def _get_mongo_connection(self):
         # mongodb
         # https://api.mongodb.com/python/current/examples/authentication.html
         # Some unsupported-by-us mechanisms documented at the above url.
@@ -187,13 +211,13 @@ class Config:
         known_tables = []
 
         # mongodb
-        (client, db) = self.get_mongo_connection()
+        (client, db) = self._get_mongo_connection()
 
         # print collections
         for coll in db.list_collection_names():
             known_tables.append(coll)
 
-        tc = self.get_db_table_config()
+        tc = self.get_db_collection_config()
 
         for entry in tc:
             assert entry.get('name') is not None
@@ -208,6 +232,109 @@ class Config:
         print(known_tables)
 
         return
+
+
+class SessionHistory:
+    def __init__(self):
+        self.history = {}
+        self.config = None
+
+    def set_config(self, config):
+        assert isinstance(config, Config)
+        self.config = config
+
+    def add_history(self, table_name, field, value):
+        assert self.config is not None
+        self.history[table_name] = (field, value)
+        return
+    
+    def has_history(self, table_name):
+        return self.history.get(table_name) is not None
+
+    def get_history(self, table_name):
+        return self.history.get(table_name)
+    
+    def _get_existing_tables(self, cache_path):
+        assert self.config is not None
+        _tables = []
+        c = sqlite3.connect(cache_path)
+        r = c.execute("select name from sqlite_master where type='table' and name not like 'sqlite_%'")
+        for row in r:
+            _tables.append(row[0])
+        return _tables
+
+    def _handle_new_cache(self, cache_path):
+        assert self.config is not None
+        _tables = self._get_existing_tables(cache_path)
+
+        c = sqlite3.connect(cache_path)
+        if not ("cache" in _tables):
+            c.execute("create table cache (object_name text unique, field_name text, field_value)")
+
+        if not ("sql_log" in _tables):
+            c.execute("create table sql_log (sql text, object_name text, Timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)")
+
+        c.commit()
+
+        # endif
+    
+        return
+
+    def append_sql_log(self, table_name, sql_stmt):
+        assert self.config is not None
+        assert isinstance(table_name, str)
+        assert isinstance(sql_stmt, str)
+
+        cache_path = self.config.get_local_cache_file()
+        c = sqlite3.connect(cache_path)
+        self._handle_new_cache(cache_path)
+        c.execute("insert into sql_log (sql, object_name) values (?,?)", (sql_stmt, table_name))
+        c.commit()
+        return
+
+    def save(self):
+        assert self.config is not None
+        # write to disk
+        cache_path = self.config.get_local_cache_file()
+        assert cache_path is not None
+
+        self._handle_new_cache(cache_path)
+
+        c = sqlite3.connect(cache_path)
+        for table, f_pair in self.history.items():
+            (fn, fv) = f_pair
+            fv_pickle = pickle.dumps(fv)
+            # Note that this might be dangerous if we add new fields later and we don't set them all...
+            #print(table, fn, fv)
+            c.execute("insert or replace into cache (object_name, field_name, field_value) values (?,?,?)", 
+                      (table, fn, fv_pickle))
+
+        c.commit()
+
+        return
+    
+    def load(self):
+        assert self.config is not None
+        print("load...")
+        time.sleep(1)
+
+        # read from disk
+        cache_path = self.config.get_local_cache_file()
+        assert cache_path is not None
+
+        self._handle_new_cache(cache_path)
+
+        c = sqlite3.connect(cache_path)
+        r = c.execute("select object_name, field_name, field_value from cache")
+        for row in r:
+            (table, fn, fv_pickle) = row
+            fv = pickle.loads(fv_pickle)
+            self.add_history(table, fn, fv)
+        # endfor
+        return
+
+
+gCache = SessionHistory()
 
 
 def do_initdb(filename):
@@ -320,9 +447,10 @@ def do_add(fname, in_db_name):
             cc = { 'collection': cl,
                    'dataculpa_watchpoint': 'auto-' + db + "-" + cl,
                    'enabled': True,
-                   'desc_order_by': '_id', 
-                   'initial_limit': 30, 
-                   'initial_limit_unit': 'days' }
+                   #'desc_order_by': '_id', 
+                   #'initial_limit': 30, 
+                   #'initial_limit_unit': 'days' 
+                 }
             cc_list.append(cc)
         # endfor
     # endfor
@@ -344,17 +472,64 @@ def do_add(fname, in_db_name):
     return
 
 
+def FetchCollection(name, config, watchpoint):
+    db = config._mongo_db
+    collection = db[name]
+
+    gCache.load()
+
+    marker_pair = gCache.get_history(name)
+    
+    query_constraints = {}
+
+    if marker_pair is not None:
+        (fk, fv) = marker_pair
+        # do something with fk and fv.
+        print("found marker_pair: %s, %s" % (fk, fv))
+        query_constraints[fk] = { '$gt': fv }
+
+    # I guess we need to sort by _id ASC
+    result = collection.find(query_constraints).sort("_id", -1)
+
+    dc = config.connect_controller(watchpoint)
+
+    # OK, walk the results.
+    last_id = None
+    record_count = 0
+    for r in result:
+        if record_count == 0:
+            last_id = r.get('_id')
+        record_count += 1
+        #dc.queue_record(r, jsonEncoder=MongoJSONEncoder)
+    # endfor
+
+    if last_id is not None:
+        gCache.add_history(name, "_id", last_id)
+        gCache.save()
+    # endif
+
+    print("new records found = ", record_count)
+
+    # FIXME: add metadata about the query...
+    # dc.queue_metadata(meta)
+
+    (_queue_id, _result) = dc.queue_commit()
+    print("server_result: __%s__" % _result)
+
+    # FIXME: On error, rollback the cache
+
+    return
+
 def do_run(fname):
     print("do_run")
 
     # load the config
     config = Config()
     config.load(fname)
-
-    db_id_str = config.generate_db_id_str()
+    gCache.set_config(config)
 
     # connect to the db.
-    # if we can't connect, log an erto the cache.
+    # if we can't connect, log an error to the cache. -- and post metadata.
     config.do_connect() # FIXME: handle errors.
 
     #traverse_new_tables = config.get_traverse_new_tables()
@@ -368,61 +543,44 @@ def do_run(fname):
     # get the job status for this identifier... see if we have something running...
     # host hash? some kind of local identity?  don't over think it for now.
 
-    #table_config = config.get_db_table_config()
+    collection_config = config.get_db_collection_config()
 
-    # query the list of tables that are live.
-    live_tables = config.do_fetch_live_table_list()
+    print("collection_config = ", collection_config)
+#    return
 
-    for t in live_tables:
-        pipeline_name = "database-%s-%s" % (db_id_str, t)
-        # connect to the cache
-        dc = config.connect_controller(pipeline_name)
-        assert dc is not None
+    for cc in collection_config:
+        name          = cc.get('collection', None)
+        watchpoint    = cc.get('dataculpa_watchpoint', None)
+        enabled       = cc.get('enabled', True)
 
-        table_config = config.get_table_config_for_table_name(t)
-        scan_this_table = True
-
-        if table_config is None:
-            scan_this_table = config.get_traverse_new_tables()
-            print("unconfigured table %s; default scan behavior is set to %s" % (t, scan_this_table))
-        else:
-            scan_this_table = table_config.get('enabled')
-            if scan_this_table is not None:
-                if scan_this_table:
-                    print("table %s is explicitly disabled in config file" % (t))
-                else:
-                    print("table %s is explicitly enabled in config file" % (t))
-                # endif
-            else:
-                # set to the default...
-                print("table %s is not disabled; so we will scan it." % (t))
-                # FIXME: We don't seem to have a default global
-                scan_this_table = True
-        # endif
-
-        if not scan_this_table:
+        if not enabled:
+            # log it, etc.
+            # probably bring over the tracing logging from other modules.
+            print("collection %s enabled set to False; skipping" % name)
             continue
-        # endif
 
-        print("scanning table %s -- will collect newest 1000 records" % t)
+        # see if we have a history
+        FetchCollection(name, config, watchpoint)
 
-        # figure out what's new...query and queue to validator.
+        # FIXME: need to implement initial load limit stuff... etc
+        #desc_order_by = cc.get('desc_order_by') -- we always use _id for now.
 
-        # get the most recent records and post them
-        recordList = config.do_fetch_data(t, 1000);
+        # figure out where we were in the cache for this
+        # FIXME: we assume append-only writes but that's not always the case, we'll need to 
+        # FIXME: support both.
 
-        for r in recordList:
-            # (dc_queueid, dc_queue_count, dc_queue_age)
-            dc.queue_record(r, jsonEncoder=MongoJSONEncoder)
-        #assert dc_queueid is not None, "got None for queue_id!"
-        #print(dc_queueid, dc_queue_count, dc_queue_age)
-        #    time.sleep(1)
 
-        (dc_queueid, server_result) = dc.queue_commit()
-        print("server_result: __%s__" % server_result)
+#YOU ARE HERE 
+
+
+# OK, we need to load up the cache, figure out where we were for the given table
+# and then deal with it appropriately... if an _id is > 30 days old, we nuke it.
+# get hte list of _ids first I guess, then go from there...
+# can we generate an id? I guess we can...
+
+
     # endfor
 
-    # walk the tables -- where we were
     return
 
 
