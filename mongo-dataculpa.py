@@ -143,7 +143,7 @@ class Config:
     def get_controller_config(self):
         return self._d.get('dataculpa_controller')
 
-    def connect_controller(self, pipeline_name):
+    def connect_controller(self, pipeline_name, timeshift=0):
         # FIXME: maybe handle $<var> substitution, like we do in the 
         # FIXME: Snowflake connector
  
@@ -154,7 +154,8 @@ class Config:
                                protocol=DataCulpaValidator.HTTP,
                                dc_host=host,
                                dc_port=port,
-                               queue_window=1000)
+                               queue_window=1000, 
+                               timeshift=timeshift)
         return v
 
     def get_db_collection_config(self):
@@ -472,7 +473,8 @@ def do_add(fname, in_db_name):
     return
 
 
-def FetchCollection(name, config, watchpoint):
+def FetchCollection(name, config, watchpoint, use_timeshift):
+    print("use_timeshift = ", use_timeshift)
     db = config._mongo_db
     collection = db[name]
 
@@ -491,16 +493,47 @@ def FetchCollection(name, config, watchpoint):
     # I guess we need to sort by _id ASC
     result = collection.find(query_constraints).sort("_id", -1)
 
-    dc = config.connect_controller(watchpoint)
+    dc = None
 
     # OK, walk the results.
     last_id = None
+    last_date = None
     record_count = 0
     for r in result:
         if record_count == 0:
             last_id = r.get('_id')
         record_count += 1
-        #dc.queue_record(r, jsonEncoder=MongoJSONEncoder)
+
+        this_id = r.get('_id')
+
+        if use_timeshift:
+            # extract the day
+            this_date = this_id.generation_time.date()
+
+            if last_date is not None and this_date != last_date:
+                # if the day has moved, close the queue and open it again.
+                (_queue_id, _result) = dc.queue_commit()
+                print("server_result: __%s__" % _result)
+                dc = None
+            # endif
+
+            if dc is None: # this gets run our first time through too.
+                this_date_dt = datetime(year=this_date.year, month=this_date.month, day=this_date.day)
+                dt = (datetime.utcnow() - this_date_dt).total_seconds()
+                dt = int(dt) # old dataculpa client library expects an int.
+                print("dt = ", dt)
+                dc = config.connect_controller(watchpoint, timeshift=dt)
+
+            # endif
+
+            last_date = this_date
+        else:
+            if dc is None:
+                dc = config.connect_controller(watchpoint)
+
+
+        dc.queue_record(r, jsonEncoder=MongoJSONEncoder)
+
     # endfor
 
     if last_id is not None:
@@ -512,9 +545,9 @@ def FetchCollection(name, config, watchpoint):
 
     # FIXME: add metadata about the query...
     # dc.queue_metadata(meta)
-
-    (_queue_id, _result) = dc.queue_commit()
-    print("server_result: __%s__" % _result)
+    if dc is not None:
+        (_queue_id, _result) = dc.queue_commit()
+        print("server_result: __%s__" % _result)
 
     # FIXME: On error, rollback the cache
 
@@ -552,6 +585,7 @@ def do_run(fname):
         name          = cc.get('collection', None)
         watchpoint    = cc.get('dataculpa_watchpoint', None)
         enabled       = cc.get('enabled', True)
+        use_timeshift = cc.get('use_timeshift', True)
 
         if not enabled:
             # log it, etc.
@@ -560,7 +594,7 @@ def do_run(fname):
             continue
 
         # see if we have a history
-        FetchCollection(name, config, watchpoint)
+        FetchCollection(name, config, watchpoint, use_timeshift)
 
         # FIXME: need to implement initial load limit stuff... etc
         #desc_order_by = cc.get('desc_order_by') -- we always use _id for now.
