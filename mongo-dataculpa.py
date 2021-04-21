@@ -211,32 +211,6 @@ class Config:
         db = client[dbname]
         return (client, db)
 
-    def test_connect_db(self):
-        known_tables = []
-
-        # mongodb
-        (client, db) = self._get_mongo_connection()
-
-        # print collections
-        for coll in db.list_collection_names():
-            known_tables.append(coll)
-
-        tc = self.get_db_collection_config()
-
-        for entry in tc:
-            assert entry.get('name') is not None
-            assert entry.get('enabled') is not None
-
-            table_name = entry.get('name')
-            table_enabled = entry.get('enabled')
-
-            print("%s -> %s" % (table_name, table_enabled))
-        # endfor
-
-        print(known_tables)
-
-        return
-
 
 class SessionHistory:
     def __init__(self):
@@ -363,10 +337,45 @@ def do_test_config(fname):
     config = Config()
     config.load(fname)
 
-    # can we connect to the db?
-    config.test_connect_db()
+    (host, port, dbname, user, password) = config.get_db_mongo()
+    client = MongoClient(host, port)
 
-    # FIXME: can we ping the controller?
+
+    # get what exists [that we can see anyway]
+    d = DiscoverDatabasesAndCollections(client)
+    
+    db_names = list(d.keys())
+    db_names.sort()
+
+    if len(db_names) == 0:
+        FatalError("No databases found on mongo server")
+        return
+    
+    config_dict = config.get_configuration()
+    if config_dict is None:
+        FatalError("Missing 'configuration' section in yaml.")
+        return
+    
+    dbname = config_dict.get('dbname')
+    if dbname is None:
+        FatalError("No 'dbname' attribute in 'configuration' section in yaml.")
+        return
+    
+    if not dbname in db_names:
+        FatalError("Configured dbname '%s' does not appear in discovered list of databases: %s" % (dbname, db_names))
+        return
+
+    # now test the collections...
+    colls = d.get(dbname)
+    #print(colls)
+
+    # FIXME: can we read a record from each configured collection?
+    config_colls = config.get_db_collection_config()
+    #print(config_colls)
+    for cc in config_colls:
+        coll_name = cc.get('collection')
+        if not coll_name in colls:
+            print("Warning: a configured collection '%s' doesn't appear in the database; check this with --discover" % coll_name)
     return config
 
 
