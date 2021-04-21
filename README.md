@@ -67,6 +67,10 @@ Anyway, grab the parts you want and place them in the .yaml.
 
 ```
 
+## Notes
+
+1. The design of the connector and configuration is that only one database can be used per connector config file. Of course you can create multiple configuration files with their own names and pull in multiple databases through a single connector, but it will need to be called from your orchestration system multiple times and with the appropriate arguments (config files).   
+
 ## Invocation
 
 The ```mongo-datalake.py``` script is intended to be invoked from cron or other orchestration systems. You can run it as frequently as you wish; you can spread out instances to isolate collections or different databases with different yaml configuration files. We recommend pointing the script at a replica of your database to reduce impact on the life system.
