@@ -96,8 +96,8 @@ class Config:
                         'collections': []
 
                     },
-                    'dataculpa_pipeline': {
-                        'name': '[required] pipeline_name',
+                    'dataculpa_watchpoint': {
+#                        'name': '[required] pipeline_name',
                         'environment': '[optional] environment, e.g., test or production',
                         'stage': '[optional] a string representing the stage of this part of the pipeline',
                         'version': '[optional] a string representing the version of implementation'
@@ -134,8 +134,11 @@ class Config:
 
 
     def get_db_mongo(self):
+        port = self._get_db('port', 27017)
+        if type(port) == str:
+            port = int(port)
         return (self._get_db('host'),
-                self._get_db('port', 27017),
+                port,
                 self._get_db('dbname'),
                 self._get_db('user'),
                 os.environ.get('MONGO_PASSWORD', ''))
