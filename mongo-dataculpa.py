@@ -664,8 +664,8 @@ def main():
 
     # FIXME: implement add subcommand.
 #    ap_add = subparsers.add_parser("--add")
-    ap.add_argument("--database", help="Operate on the specified database name")
-    ap.add_argument("--counts",   help="For --discover: show table counts total and last 30 days of records")
+    ap.add_argument("--database", help="For --add: Operate on the specified database name")
+    ap.add_argument("--counts",   help="For --discover: show table counts total and last 30 days of records", action='store_true')
 
     args = ap.parse_args()
 
