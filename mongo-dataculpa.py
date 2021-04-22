@@ -49,7 +49,7 @@ import decimal
 import pymongo
 import bson
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from dataculpa import DataCulpaValidator
 
@@ -57,7 +57,7 @@ from pymongo import MongoClient, DESCENDING
 
 DEBUG = False
 
-def FatalError(rc, message):
+def FatalError(message, rc=2):
     sys.stderr.write(message)
     sys.stderr.write("\n")
     sys.stderr.flush()
@@ -396,7 +396,7 @@ def DiscoverDatabasesAndCollections(client):
             d[db_name] = existing
     return d
 
-def do_discover(fname):
+def do_discover(fname, counts=False):
     # We also want to discover the databases for the given server, especially if none is specified.
 
     # We want to discover the collections in the given database.
@@ -418,7 +418,17 @@ def do_discover(fname):
         cList = d.get(db, [])
         cList.sort()
         for cl in cList:
-            print("   %s" % cl)
+            if counts:
+                db_handle = client[db]
+                coll_handle = db_handle[cl]
+                total = coll_handle.count()
+
+                # create synthetic id.
+                fake_id = bson.ObjectId().from_datetime(datetime.utcnow() - timedelta(days=30))
+                recent = coll_handle.find({"_id": { "$gt": fake_id }}).count()
+                print("   %30s   total = %10s, recent = %10s" % (cl, total, recent))
+            else:
+                print("   %s" % cl)
         print("")
     # endfor
 
@@ -511,6 +521,8 @@ def FetchCollection(name, config, watchpoint, use_timeshift):
     last_id = None
     last_date = None
     record_count = 0
+    last_had_broken_id = False
+
     for r in result:
         if record_count == 0:
             last_id = r.get('_id')
@@ -519,30 +531,39 @@ def FetchCollection(name, config, watchpoint, use_timeshift):
         this_id = r.get('_id')
 
         if use_timeshift:
-            # extract the day
-            this_date = this_id.generation_time.date()
+            if not isinstance(this_id, bson.ObjectId):
+                print("can't infer time from non-ObjectId _id: ", this_id)
+                if not last_had_broken_id:
+                    last_date = None
+                    if dc is not None:
+                        dc.queue_commit()
+                        dc = None
+                    last_had_broken_id = True
+            else:        
+                # extract the day
+                this_date = this_id.generation_time.date()
 
-            if last_date is not None and this_date != last_date:
-                # if the day has moved, close the queue and open it again.
-                (_queue_id, _result) = dc.queue_commit()
-                print("server_result: __%s__" % _result)
-                dc = None
-            # endif
+                if last_date is not None and this_date != last_date:
+                    # if the day has moved, close the queue and open it again.
+                    (_queue_id, _result) = dc.queue_commit()
+                    print("server_result: __%s__" % _result)
+                    dc = None
+                # endif
 
-            if dc is None: # this gets run our first time through too.
-                this_date_dt = datetime(year=this_date.year, month=this_date.month, day=this_date.day)
-                dt = (datetime.utcnow() - this_date_dt).total_seconds()
-                dt = int(dt) # old dataculpa client library expects an int.
-                print("dt = ", dt)
-                dc = config.connect_controller(watchpoint, timeshift=dt)
+                if dc is None: # this gets run our first time through too.
+                    this_date_dt = datetime(year=this_date.year, month=this_date.month, day=this_date.day)
+                    dt = (datetime.utcnow() - this_date_dt).total_seconds()
+                    dt = int(dt) # old dataculpa client library expects an int.
+                    print("dt = ", dt)
+                    dc = config.connect_controller(watchpoint, timeshift=dt)
 
-            # endif
+                # endif
 
-            last_date = this_date
-        else:
-            if dc is None:
-                dc = config.connect_controller(watchpoint)
+                last_date = this_date
+        # endif
 
+        if dc is None: # note we can enter here even if use_timeshift is true if we hit a weird _id field
+            dc = config.connect_controller(watchpoint)
 
         dc.queue_record(r, jsonEncoder=MongoJSONEncoder)
 
@@ -644,6 +665,7 @@ def main():
     # FIXME: implement add subcommand.
 #    ap_add = subparsers.add_parser("--add")
     ap.add_argument("--database", help="Operate on the specified database name")
+    ap.add_argument("--counts",   help="For --discover: show table counts total and last 30 days of records")
 
     args = ap.parse_args()
 
@@ -661,8 +683,11 @@ def main():
         # endif
 
         if args.discover:
+            do_counts = False
+            if args.counts:
+                do_counts = True
             dotenv.load_dotenv(env_path)
-            do_discover(args.discover)
+            do_discover(args.discover, counts=do_counts)
             return
         elif args.test:
             dotenv.load_dotenv(env_path)
