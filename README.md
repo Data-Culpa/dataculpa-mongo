@@ -12,23 +12,64 @@ This connector conforms to the [Data Culpa connector template](https://github.co
 ```
 pip install python-dotenv pymongo dataculpa-client
 ```
-3. Create a .env file with the following keys (if you're running Mongo without a password, no need to specify the DB_PASSWORD key):
+3. Run `python3 mongo-dataculpa.py --init mongodb.yaml` (using a .yaml filename of your choice) to set up stub files to populate. This creates a `mongodb.yaml` and a `mongodb.yaml.env`. You can pass in the .env file name to future executions of `mongo-dataculpa.py` with the `-e` flag or run `ln -s mongodb.yaml.env .env` (or just move the file to `.env`).
+
+4. Modify the `.env` file with the following keys (if you're running Mongo without a password, no need to specify the MONGO_PASSWORD key):
 
 ```
 # API key to access the storage.
 DC_CONTROLLER_SECRET = secret-here   # Create a new API secret in the Data Culpa Validator UI
-DB_PASSWORD = secret-here 
+MONGO_PASSWORD = secret-here 
 ```
 
-4. Run ```mongo-dataculpa.py --init your.yaml``` to generate a template yaml to fill in connection coordinates. Note that we always keep secrets in the .env and not the yaml, so that the yaml file will be safe to check into source control or otherwise distribute in your organization, etc.
+4. You can now query your Mongo host to see what your configuration can see for connecting. Run `python3 mongo-dataculpa.py --discover mongodb.yaml` to see a list of databases and collections; note that `--discover` doesn't mutate any configuration files or other state:
 
-5. Once you have your yaml file edited, run ```mongo-dataculpa.py --test your.yaml``` to test the connections to the database and the Data Culpa Validator controller.
+```
+admin:
+   system.version
 
-6. Run ```mongo-dataculpa.py --addnew your.yaml``` to add metadata to your yaml file for each collection found in your MongoDB and example parameters of how to treat each collection and new collections:
+config:
+   system.sessions
+
+local:
+   startup_log
+
+mydb:
+   my_analytics
+   my_facility
+   my_payroll
+```
+
+5. Run ```python3 mongo-dataculpa.py --add mongodb.yaml --database mydb``` (using the `mydb` value of interest from `--discover`) to print out example YAML that you can place into the `mongodb.yaml` file under the `collections` section:
+
+```
+$ python3 mongo-dataculpa.py --add mongodb.yaml --database masdb
+Example yaml to work with:
+--------------------------
+collections:
+- collection: my_analytics
+  dataculpa_watchpoint: auto-mydb-my_analytics
+  enabled: true
+- collection: my_facility
+  dataculpa_watchpoint: auto-mydb-my_facility
+  enabled: true
+...
+```
+The `dataculpa_watchpoint` string is what the name of the collection will be in Data Culpa; you can change this to anything you want. If you edit it later, you'll start a new namespace in Data Culpa. You can omit the `enabled` flag (default is true if it is missing); it is provided as a convenience to turn off watching a collection if needed.
+
+Anyway, grab the parts you want and place them in the .yaml.
+
+6. You can test your .yaml file with the `--test` flag. This will also check that at least one record can be pulled from each collection that is specified.
+
+7. Once the `--test` is working, you can start pulling data for real with `--run`. You can kick off `--run` from cron or whatever orchestration system you want to use.
 
 ```
 
 ```
+
+## Notes
+
+1. The design of the connector and configuration is that only one database can be used per connector config file. Of course you can create multiple configuration files with their own names and pull in multiple databases through a single connector, but it will need to be called from your orchestration system multiple times and with the appropriate arguments (config files).   
 
 ## Invocation
 
@@ -36,7 +77,7 @@ The ```mongo-datalake.py``` script is intended to be invoked from cron or other 
 
 ## Future Improvements
 
-There are many improvements we are considering for this module. You can get in touch by writing to hello@dataculpa.com or opening issues in this repository.
+There are many improvements we are considering for this module, including distribution as a Docker container. You can get in touch by writing to hello@dataculpa.com or opening issues in this repository.
 
 ## SaaS deployment
 
