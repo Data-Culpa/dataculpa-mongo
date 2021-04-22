@@ -598,21 +598,9 @@ def do_run(fname):
     # if we can't connect, log an error to the cache. -- and post metadata.
     config.do_connect() # FIXME: handle errors.
 
-    #traverse_new_tables = config.get_traverse_new_tables()
-
-    # we need to keep some metadata of where we were at -- some state.
-    #
-
-    # log that we connected.
-    #mc.write_run_status(db_id_str, "connected; will %straverse new tables" % ("" if traverse_new_tables else "NOT "))
-
-    # get the job status for this identifier... see if we have something running...
-    # host hash? some kind of local identity?  don't over think it for now.
-
     collection_config = config.get_db_collection_config()
 
     print("collection_config = ", collection_config)
-#    return
 
     for cc in collection_config:
         name          = cc.get('collection', None)
@@ -628,25 +616,6 @@ def do_run(fname):
 
         # see if we have a history
         FetchCollection(name, config, watchpoint, use_timeshift)
-
-        # FIXME: need to implement initial load limit stuff... etc
-        #desc_order_by = cc.get('desc_order_by') -- we always use _id for now.
-
-        # figure out where we were in the cache for this
-        # FIXME: we assume append-only writes but that's not always the case, we'll need to 
-        # FIXME: support both.
-
-
-#YOU ARE HERE 
-
-
-# OK, we need to load up the cache, figure out where we were for the given table
-# and then deal with it appropriately... if an _id is > 30 days old, we nuke it.
-# get hte list of _ids first I guess, then go from there...
-# can we generate an id? I guess we can...
-
-
-    # endfor
 
     return
 
