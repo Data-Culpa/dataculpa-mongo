@@ -87,6 +87,7 @@ class Config:
                     'dataculpa_controller': {
                             'host': 'localhost',
                             'port': 7777,
+                            'api_key': '[required] fill me in'
                     },
                     'configuration': {
                         'host': '[required] localhost',
@@ -149,14 +150,23 @@ class Config:
     def connect_controller(self, pipeline_name, timeshift=0):
         # FIXME: maybe handle $<var> substitution, like we do in the 
         # FIXME: Snowflake connector
- 
         cc = self.get_controller_config()
         host = cc.get('host')
         port = cc.get('port')
+        access_id = cc.get('api_key')
+        if access_id is None:
+            FatalError("Missing api_key from .yaml config")
+
+        secret = os.environ.get('DC_API_SECRET')
+        if secret is None:
+            FatalError("Missing DC_API_SECRET from environment or .env file")
+
         v = DataCulpaValidator(pipeline_name,
                                protocol=DataCulpaValidator.HTTP,
                                dc_host=host,
                                dc_port=port,
+                               api_access_id=access_id,
+                               api_secret=secret,
                                queue_window=1000, 
                                timeshift=timeshift)
         return v
@@ -321,8 +331,8 @@ def do_initdb(filename):
     config.save(filename)
     # Put out an .env template too.
     with open(filename + ".env", "w") as f:
-        #f.write("DC_CONTROLLER_SECRET=empty\n")
-        f.write("MONGO_PASSWORD=[optional]\n")
+        f.write("DC_API_SECRET=fill_me_in\n")
+        f.write("#MONGO_PASSWORD=[optional]\n")
         f.close()
 
     return
