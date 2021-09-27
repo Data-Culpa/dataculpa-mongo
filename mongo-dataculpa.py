@@ -50,10 +50,11 @@ import pymongo
 import bson
 
 from datetime import datetime, timedelta
+from dateutil.parser import parse as DateUtilParse
 
 from dataculpa import DataCulpaValidator
 
-from pymongo import MongoClient, DESCENDING
+from pymongo import MongoClient, ASCENDING
 
 DEBUG = False
 
@@ -202,14 +203,6 @@ class Config:
             live_tables.append(coll)
 
         return live_tables
-
-    def do_fetch_data(self, table_name, maxCount=1000):
-        pr = []
-        result = self._mongo_db[table_name].find().sort("_id", DESCENDING).limit(maxCount)
-        for r in result:
-            pr.append(r)
-            #print(r)
-        return pr
 
     def _get_mongo_connection(self):
         # mongodb
@@ -480,9 +473,6 @@ def do_add(fname, in_db_name):
             cc = { 'collection': cl,
                    'dataculpa_watchpoint': 'auto-' + db + "-" + cl,
                    'enabled': True,
-                   #'desc_order_by': '_id', 
-                   #'initial_limit': 30, 
-                   #'initial_limit_unit': 'days' 
                  }
             cc_list.append(cc)
         # endfor
@@ -505,8 +495,8 @@ def do_add(fname, in_db_name):
     return
 
 
-def FetchCollection(name, config, watchpoint, use_timeshift):
-    print("use_timeshift = ", use_timeshift)
+def FetchCollection(name, config, watchpoint, use_timeshift, timeshift_field):
+    print("use_timeshift = %s; timeshift_field = %s", (use_timeshift, timeshift_field))
     db = config._mongo_db
     collection = db[name]
 
@@ -523,7 +513,11 @@ def FetchCollection(name, config, watchpoint, use_timeshift):
         query_constraints[fk] = { '$gt': fv }
 
     # I guess we need to sort by _id ASC
-    result = collection.find(query_constraints).sort("_id", -1)
+    if use_timeshift and timeshift_field is None:
+        timeshift_field = "_id"
+
+    if timeshift_field is not None:
+        result = collection.find(query_constraints).sort(timeshift_field, ASCENDING)
 
     dc = None
 
@@ -538,38 +532,49 @@ def FetchCollection(name, config, watchpoint, use_timeshift):
             last_id = r.get('_id')
         record_count += 1
 
-        this_id = r.get('_id')
-
         if use_timeshift:
-            if not isinstance(this_id, bson.ObjectId):
-                print("can't infer time from non-ObjectId _id: ", this_id)
-                if not last_had_broken_id:
-                    last_date = None
-                    if dc is not None:
-                        dc.queue_commit()
-                        dc = None
-                    last_had_broken_id = True
-            else:        
+            this_id = r.get(timeshift_field)
+            this_date = None
+
+            if isinstance(this_id, datetime):
+                # not isinstance(this_id, bson.ObjectId): 
+                #print("can't infer time from non-ObjectId _id: ", this_id)
+                #if not last_had_broken_id:
+                #    last_date = None
+                #    if dc is not None:
+                #        dc.queue_commit()
+                #        dc = None
+                #    last_had_broken_id = True
+                # look at the timezone...
+                this_date = this_id.date()
+            elif isinstance(this_id, str):
+                # we're going to struggle here...
+                print("Timeshift field \"%s\" came back as a string on record id \"%s\" which is going to be very hard to run date compares... clearly we need to handle this better than exiting."
+                        % (timeshift_field, r.get('_id')))
+                os._exit(2)
+                dt = DateUtilParse(this_id)
+            elif isinstance(this_id, bson.ObjectId):        
                 # extract the day
                 this_date = this_id.generation_time.date()
+            # endif
 
-                if last_date is not None and this_date != last_date:
-                    # if the day has moved, close the queue and open it again.
-                    (_queue_id, _result) = dc.queue_commit()
-                    print("server_result: __%s__" % _result)
-                    dc = None
-                # endif
+            if last_date is not None and this_date != last_date:
+                # if the day has moved, close the queue and open it again.
+                (_queue_id, _result) = dc.queue_commit()
+                print("server_result: __%s__" % _result)
+                dc = None
+            # endif
 
-                if dc is None: # this gets run our first time through too.
-                    this_date_dt = datetime(year=this_date.year, month=this_date.month, day=this_date.day)
-                    dt = (datetime.utcnow() - this_date_dt).total_seconds()
-                    dt = int(dt) # old dataculpa client library expects an int.
-                    print("dt = ", dt)
-                    dc = config.connect_controller(watchpoint, timeshift=dt)
+            if dc is None: # this gets run our first time through too.
+                this_date_dt = datetime(year=this_date.year, month=this_date.month, day=this_date.day)
+                dt = (datetime.utcnow() - this_date_dt).total_seconds()
+                dt = int(dt) # old dataculpa client library expects an int.
+                print("dt = ", dt)
+                dc = config.connect_controller(watchpoint, timeshift=dt)
 
-                # endif
+            # endif
 
-                last_date = this_date
+            last_date = this_date
         # endif
 
         if dc is None: # note we can enter here even if use_timeshift is true if we hit a weird _id field
@@ -613,10 +618,11 @@ def do_run(fname):
     print("collection_config = ", collection_config)
 
     for cc in collection_config:
-        name          = cc.get('collection', None)
-        watchpoint    = cc.get('dataculpa_watchpoint', None)
-        enabled       = cc.get('enabled', True)
-        use_timeshift = cc.get('use_timeshift', True)
+        name            = cc.get('collection', None)
+        watchpoint      = cc.get('dataculpa_watchpoint', None)
+        enabled         = cc.get('enabled', True)
+        use_timeshift   = cc.get('use_timeshift', True)
+        timeshift_field = cc.get('timeshift_field', None)
 
         if not enabled:
             # log it, etc.
@@ -625,7 +631,7 @@ def do_run(fname):
             continue
 
         # see if we have a history
-        FetchCollection(name, config, watchpoint, use_timeshift)
+        FetchCollection(name, config, watchpoint, use_timeshift, timeshift_field)
 
     return
 
